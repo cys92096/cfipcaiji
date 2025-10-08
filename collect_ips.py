@@ -14,7 +14,7 @@ ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
 if os.path.exists('ip.txt'):
     os.remove('ip.txt')
 
-# 使用列表存储所有找到的IP地址，不进行去重
+# 使用列表存储IP地址，不进行去重和排序
 all_ips = []
 
 for url in urls:
@@ -31,29 +31,16 @@ for url in urls:
             ip_matches = re.findall(ip_pattern, html_content, re.IGNORECASE)
             
             # 将找到的IP添加到列表中（不进行去重）
-            all_ips.extend(ip_matches)
+            all_ips.extend(ip_matches) # 使用extend将匹配到的IP列表添加到all_ips中
     except requests.exceptions.RequestException as e:
         print(f'请求 {url} 失败: {e}')
         continue
 
-# 将所有找到的IP地址（包含重复项，不排序）写入文件
+# 将所有IP地址写入文件（不进行去重和排序）
 if all_ips:
     with open('ip.txt', 'w') as file:
         for ip in all_ips:
             file.write(ip + '\n')
-    print(f'已保存 {len(all_ips)} 个IP地址到ip.txt文件（包含重复项，未排序）。')
-else:
-    print('未找到有效的IP地址。')
-        continue
-
-# 仅保留前10个IP地址
-ips_to_save = all_ips[:10]
-
-# 将IP地址写入文件
-if ips_to_save:
-    with open('ip.txt', 'w') as file:
-        for ip in ips_to_save:
-            file.write(ip + '\n')
-    print(f'已保存 {len(ips_to_save)} 个IP地址到ip.txt文件（取前10个，未去重和排序）。')
+    print(f'已保存 {len(all_ips)} 个IP地址到ip.txt文件。')
 else:
     print('未找到有效的IP地址。')
