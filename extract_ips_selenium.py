@@ -1,3 +1,4 @@
+import time # 添加这一行
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -8,7 +9,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime
 import os
 from bs4 import BeautifulSoup
-import time # 导入 time 模块
 
 def extract_cloudflare_top_10_ips(url):
     chrome_options = Options()
@@ -16,6 +16,7 @@ def extract_cloudflare_top_10_ips(url):
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     
+    # 自动管理ChromeDriver
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
@@ -23,18 +24,74 @@ def extract_cloudflare_top_10_ips(url):
     try:
         driver.get(url)
 
-        # 1. 显式等待表格内容加载
+        # 显式等待表格内容加载 (等待 tbody tr 出现)
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, 'table.table-striped tbody tr'))
         )
+        
+        # ！！！关键改进点！！！
+        # 等待额外的3-5秒，让页面上的JavaScript有时间从2024更新到2025（或实时）
+        print("等待5秒，确保页面内容更新到最新实时数据...")
+        time.sleep(5) # 增加等待时间，因为你提到3-5秒后才更新
+        
+        # 获取页面的完整HTML内容，并用BeautifulSoup解析
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        
+        table = soup.find('table', class_='table table-striped')
+        if not table:
+            print("未找到表格元素。")
+            return []
+        
+        tbody = table.find('tbody')
+        if not tbody:
+            print("未找到表格的 tbody 元素。")
+            return []
 
-        # 2. (改进点) 等待页面上的更新时间戳显示为当前日期
-        # 获取当前日期字符串，格式例如 '2023-10-27'
-        today_date_str = datetime.now().strftime("%Y-%m-%d")
+        # 遍历 tbody 中的所有行，提取IP地址
+        for i, row in enumerate(tbody.find_all('tr')):
+            cols = row.find_all('td')
+            # 根据截图，IP地址仍然在第二个<td>元素 (index 1)
+            # 线路在第一个<td> (index 0)
+            # 时间在最后一个<td> (index -1)
+            if len(cols) > 1: # 确保至少有线路和IP两列
+                ip_address = cols[1].text.strip() # IP地址在第二个<td>元素
+                if ip_address: # 确保IP地址不为空
+                    top_ips.append(ip_address)
+                    if len(top_ips) >= 10: # 只提取前10个IP
+                        break
+        return top_ips
 
-        try:
-            # 等待 id="updateTime" 元素的内容包含今天的日期
-            WebDriverWait(driver, 15).until(
+    except Exception as e:
+        print(f"Selenium 提取失败: {e}")
+        return []
+    finally:
+        driver.quit()
+
+def main():
+    url = "https://api.uouin.com/cloudflare.html"
+    ips = extract_cloudflare_top_10_ips(url)
+
+    if ips:
+        print("成功提取到IP数据：")
+        for ip in ips:
+            print(ip)
+
+        # 时间戳和文件保存逻辑保持不变
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        output_dir = 'data'
+        os.makedirs(output_dir, exist_ok=True)
+        output_filename = os.path.join(output_dir, "cloudflare_top10_ips.txt")
+
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            for ip in ips:
+                f.write(f"{ip}\n")
+        
+        print(f"\n数据已保存到 {output_filename}")
+    else:
+        print("未能提取IP数据。")
+
+if __name__ == "__main__":
+    main()            WebDriverWait(driver, 15).until(
                 EC.text_to_be_present_in_element((By.ID, 'updateTime'), today_date_str)
             )
             print(f"页面更新时间已匹配到今天 ({today_date_str})。")
