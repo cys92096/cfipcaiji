@@ -1,0 +1,52 @@
+name: Scrape Cloudflare Top IPs
+
+on:
+  schedule:
+    # 每两小时运行一次，例如在 UTC 时间的 00:00, 02:00, 04:00 ...
+    # CRON 表达式：分钟 小时 天 月 星期
+    # '0 */2 * * *' 表示每小时的第0分钟，每隔2小时运行一次
+    - cron: '0 */2 * * *'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x' # 使用最新的Python 3版本
+
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 pandas
+        # 如果使用Selenium，还需要安装：
+        # pip install selenium webdriver_manager # webdriver_manager可以自动下载chromedriver
+
+    # 如果使用Selenium，需要额外的步骤来设置Chrome和ChromeDriver
+    # - name: Setup Chrome
+    #   uses: browser-actions/setup-chrome@latest
+    #   with:
+    #     chrome-version: 'stable' # 或指定版本
+
+    # - name: Setup ChromeDriver
+    #   uses: browser-actions/setup-chromedriver@latest
+    #   with:
+    #     chromedriver-version: 'stable' # 与Chrome版本匹配
+
+    - name: Run IP extraction script
+      run: python extract_ips.py # 或 python extract_ips_selenium.py 如果使用Selenium
+
+    - name: Commit and push changes
+      run: |
+        git config user.name "GitHub Actions Bot"
+        git config user.email "actions@github.com"
+        git add data/*.csv # 添加所有新生成的CSV文件
+        git commit -m "Automated IP data update for $(date +%Y-%m-%d_%H-%M)" || echo "No changes to commit"
+        git push
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub Actions 默认提供的token
