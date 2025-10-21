@@ -20,31 +20,32 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install beautifulsoup4 pandas
-        pip install selenium webdriver_manager # 安装selenium和webdriver_manager
+        pip install beautifulsoup4 selenium webdriver_manager # 只保留需要的库
+        # pandas不再需要，因为我们不再处理DataFrame
 
-    # ====== 修改 Chrome 设置，移除单独的 ChromeDriver 设置 ======
     - name: Setup Chrome
-      uses: browser-actions/setup-chrome@v1 # 使用这个Action来安装Chrome
+      uses: browser-actions/setup-chrome@v1
       with:
-        chrome-version: 'stable' # 安装稳定版Chrome
-    
-    # 移除或注释掉 setup-chromedriver 步骤，让 webdriver_manager 处理
-    # - name: Setup ChromeDriver
-    #   uses: browser-actions/setup-chromedriver@v1
-    #   with:
-    #     chromedriver-version: 'stable'
-    # ==============================================================
+        chrome-version: 'stable'
 
     - name: Run IP extraction script
-      run: python extract_ips_selenium.py
+      run: python extract_ips_selenium.py # 确保文件名正确
 
     - name: Commit and push changes
       run: |
         git config user.name "GitHub Actions Bot"
         git config user.email "actions@github.com"
-        git add data/*.csv
-        git commit -m "Automated IP data update for $(date +%Y-%m-%d_%H-%M)" || echo "No changes to commit"
-        git push
+        
+        # 确保data目录存在，即使脚本没有创建文件，或为了git add data/cloudflare_top10_ips.txt能找到目录
+        mkdir -p data 
+        
+        # 检查文件是否存在且有内容，避免空文件提交
+        if [ -s data/cloudflare_top10_ips.txt ]; then
+          git add data/cloudflare_top10_ips.txt
+          git commit -m "Automated Cloudflare Top 10 IPs update ($(date +%Y-%m-%d %H:%M))" || echo "No changes to commit"
+          git push
+        else
+          echo "No valid IP data file generated or file is empty, skipping commit."
+        fi
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
