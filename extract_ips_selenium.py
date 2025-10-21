@@ -7,7 +7,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime
 import os
-from bs4 import BeautifulSoup # 仍然需要BeautifulSoup来解析页面HTML
+from bs4 import BeautifulSoup
 
 def extract_cloudflare_top_10_ips(url):
     chrome_options = Options()
@@ -15,7 +15,6 @@ def extract_cloudflare_top_10_ips(url):
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     
-    # 自动管理ChromeDriver
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
@@ -23,10 +22,35 @@ def extract_cloudflare_top_10_ips(url):
     try:
         driver.get(url)
 
-        # 显式等待表格内容加载
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, 'table.table-striped tbody tr'))
-        )
+        # ====== 改进的等待逻辑开始 ======
+        
+        # 1. 等待“加载中”提示消失
+        # 查找加载提示元素
+        loading_element_selector = 'fieldset.layui-elem-field b'
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.invisibility_of_element_located((By.CSS_SELECTOR, loading_element_selector))
+            )
+            print("加载提示已消失。")
+        except Exception as e:
+            print(f"警告: 加载提示未在预期时间内消失或未找到: {e}. 继续尝试抓取...")
+            # 如果加载提示没有出现或没有消失，也可能是页面直接加载了最终数据
+
+        # 2. 确保表格的 tbody 元素存在且包含数据（例如，等待第一行的第二个td元素出现，即IP地址）
+        # 这比仅仅等待任何tr更具体，因为旧的tr可能立即满足。
+        # 我们等待一个有内容的IP地址元素出现。
+        ip_element_selector = 'table.table-striped tbody tr:nth-child(1) td:nth-child(2)'
+        try:
+            WebDriverWait(driver, 20).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ip_element_selector))
+            )
+            # 也可以尝试等待元素文本非空，但visibility通常足够
+            print("表格数据（第一个IP）已加载可见。")
+        except Exception as e:
+            print(f"错误: 等待表格数据加载超时: {e}. 无法获取实时数据。")
+            return [] # 如果关键数据没有加载，直接返回空列表
+            
+        # ====== 改进的等待逻辑结束 ======
         
         # 获取页面的完整HTML内容，并用BeautifulSoup解析
         soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -41,24 +65,13 @@ def extract_cloudflare_top_10_ips(url):
             print("未找到表格的 tbody 元素。")
             return []
 
-        # 遍历 tbody 中的所有行，提取IP地址
-        # 我们需要找到“优选IP”这一列
-        
-        # 你的HTML结构是这样的：
-        # <tr>
-        #   <th scope="row">1</th>
-        #   <td>电信</td>  <- 这是第一个 <td> (index 0)
-        #   <td>172.64.82.114</td> <- 这是第二个 <td> (index 1)，即IP地址
-        #   ...
-        # </tr>
-
         for i, row in enumerate(tbody.find_all('tr')):
             cols = row.find_all('td')
-            if len(cols) > 1: # 确保至少有线路和IP两列
-                ip_address = cols[1].text.strip() # IP地址在第二个<td>元素
-                if ip_address: # 确保IP地址不为空
+            if len(cols) > 1:
+                ip_address = cols[1].text.strip()
+                if ip_address and ip_address != 'Loading...': # 再次确保IP地址有效，不是加载占位符
                     top_ips.append(ip_address)
-                    if len(top_ips) >= 10: # 只提取前10个IP
+                    if len(top_ips) >= 10:
                         break
         return top_ips
 
@@ -79,10 +92,9 @@ def main():
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         output_dir = 'data'
-        os.makedirs(output_dir, exist_ok=True) # 创建数据目录如果不存在
-        output_filename = os.path.join(output_dir, "cloudflare_top10_ips.txt") # 固定文件名，每次覆盖
+        os.makedirs(output_dir, exist_ok=True)
+        output_filename = os.path.join(output_dir, "cloudflare_top10_ips.txt")
 
-        # 将IP地址写入TXT文件，每个IP一行
         with open(output_filename, 'w', encoding='utf-8') as f:
             for ip in ips:
                 f.write(f"{ip}\n")
