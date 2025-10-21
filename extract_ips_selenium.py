@@ -102,7 +102,6 @@ if __name__ == "__main__":
         # 2. 确保表格的 tbody 元素存在且包含数据（例如，等待第一行的第二个td元素出现，即IP地址）
         # 这比仅仅等待任何tr更具体，因为旧的tr可能立即满足。
         # 我们等待一个有内容的IP地址元素出现。
-        ip_element_selector = 'table.table-striped tbody tr:nth-child(1) td:nth-child(2)'
         try:
             WebDriverWait(driver, 20).until(
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ip_element_selector))
