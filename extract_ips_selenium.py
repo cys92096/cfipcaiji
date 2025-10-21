@@ -4,129 +4,150 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager # 导入 ChromeDriverManager
-import pandas as pd
+from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime
 import os
+from bs4 import BeautifulSoup # 仍然需要BeautifulSoup来解析页面HTML
 
-def extract_cloudflare_ips_selenium(url):
+def extract_cloudflare_top_10_ips(url):
     chrome_options = Options()
-    chrome_options.add_argument("--headless") # 无头模式
-    chrome_options.add_argument("--no-sandbox") # 在CI/CD环境中非常重要
-    chrome_options.add_argument("--disable-dev-shm-usage") # 解决/dev/shm空间不足问题
-    # 如果GitHub Actions的浏览器设置正确，下面的路径通常不需要手动指定
-    # 但为了兼容性和鲁棒性，使用webdriver_manager是好习惯
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
     
-    # 使用webdriver_manager自动管理ChromeDriver
+    # 自动管理ChromeDriver
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
+    top_ips = []
     try:
         driver.get(url)
 
         # 显式等待表格内容加载
-        # 等待 tbody 内部至少有一个 tr 元素出现
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, 'table.table-striped tbody tr'))
         )
         
-        # 再次获取页面HTML，并用BeautifulSoup解析
+        # 获取页面的完整HTML内容，并用BeautifulSoup解析
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         
         table = soup.find('table', class_='table table-striped')
         if not table:
             print("未找到表格元素。")
-            return None
+            return []
         
         tbody = table.find('tbody')
         if not tbody:
             print("未找到表格的 tbody 元素。")
-            return None
+            return []
 
-        ips_data = []
-        # 遍历 tbody 中的所有行
+        # 遍历 tbody 中的所有行，提取IP地址
+        # 我们需要找到“优选IP”这一列
+        
+        # 你的HTML结构是这样的：
+        # <tr>
+        #   <th scope="row">1</th>
+        #   <td>电信</td>  <- 这是第一个 <td> (index 0)
+        #   <td>172.64.82.114</td> <- 这是第二个 <td> (index 1)，即IP地址
+        #   ...
+        # </tr>
+
         for i, row in enumerate(tbody.find_all('tr')):
-            # 提取每一列的数据
             cols = row.find_all('td')
-            # 确保有足够的列，根据你提供的HTML，数据列从<td>开始
-            if len(cols) >= 8: # 线路, IP, 丢包, 延迟, 速度, 带宽, Colo, 时间
-                line = cols[0].text.strip()
-                ip_address = cols[1].text.strip()
-                packet_loss = cols[2].text.strip()
-                latency = cols[3].text.strip()
-                speed_mbps = cols[4].text.strip()
-                bandwidth_mb = cols[5].text.strip()
-                colo_link = cols[6].find('a')['href'] if cols[6].find('a') else ''
-                update_time = cols[7].text.strip()
-                
-                ips_data.append({
-                    '排序': i + 1,
-                    '线路': line,
-                    '优选IP': ip_address,
-                    '丢包': packet_loss,
-                    '延迟': latency,
-                    '速度': speed_mbps,
-                    '带宽': bandwidth_mb,
-                    'Colo链接': colo_link,
-                    '更新时间': update_time
-                })
-                # 如果是直接取页面前十行，且不按线路分类
-                if len(ips_data) >= 10:
-                    break
-        
-        # 如果需要按线路分类并取前十，使用下面的逻辑
-        if not ips_data:
-            return None
-        
-        df_all_ips = pd.DataFrame(ips_data)
-
-        # 清理和转换“速度”列为数值，以便排序
-        # 考虑到速度可能为 'N/A' 或其他非数字值，需要更健壮的转换
-        df_all_ips['速度_数值'] = pd.to_numeric(
-            df_all_ips['速度'].str.replace('mb/s', ''), 
-            errors='coerce' # 无法转换的设置为 NaN
-        )
-        # 排序时，将 NaN 值放在最后
-        
-        top_ips_by_line = []
-        for line_type in df_all_ips['线路'].unique():
-            line_df = df_all_ips[df_all_ips['线路'] == line_type]
-            # 按照速度（数值）降序排列，取前10，NaN 放在最后
-            top_10_for_line = line_df.sort_values(by='速度_数值', ascending=False, na_position='last').head(10)
-            top_ips_by_line.append(top_10_for_line)
-        
-        if top_ips_by_line:
-            final_top_ips = pd.concat(top_ips_by_line)
-            final_top_ips = final_top_ips.drop(columns=['速度_数值']).reset_index(drop=True)
-            final_top_ips['总排序'] = final_top_ips.index + 1
-            return final_top_ips.to_dict('records')
-        else:
-            return None # 没有提取到任何数据
+            if len(cols) > 1: # 确保至少有线路和IP两列
+                ip_address = cols[1].text.strip() # IP地址在第二个<td>元素
+                if ip_address: # 确保IP地址不为空
+                    top_ips.append(ip_address)
+                    if len(top_ips) >= 10: # 只提取前10个IP
+                        break
+        return top_ips
 
     except Exception as e:
         print(f"Selenium 提取失败: {e}")
-        return None
+        return []
     finally:
         driver.quit()
 
-def main_selenium():
+def main():
     url = "https://api.uouin.com/cloudflare.html"
-    ips = extract_cloudflare_ips_selenium(url)
+    ips = extract_cloudflare_top_10_ips(url)
 
     if ips:
-        df = pd.DataFrame(ips)
         print("成功提取到IP数据：")
-        print(df)
+        for ip in ips:
+            print(ip)
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         output_dir = 'data'
-        os.makedirs(output_dir, exist_ok=True)
-        output_filename = os.path.join(output_dir, f"cloudflare_top_ips_by_line_{timestamp}.csv") # 修改文件名以反映按线路排序
+        os.makedirs(output_dir, exist_ok=True) # 创建数据目录如果不存在
+        output_filename = os.path.join(output_dir, "cloudflare_top10_ips.txt") # 固定文件名，每次覆盖
+
+        # 将IP地址写入TXT文件，每个IP一行
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            for ip in ips:
+                f.write(f"{ip}\n")
         
-        df.to_csv(output_filename, index=False, encoding='utf-8-sig')
         print(f"\n数据已保存到 {output_filename}")
     else:
         print("未能提取IP数据。")
 
 if __name__ == "__main__":
-    main_selenium()
+    main()
+```
+
+### 修改后的 GitHub Actions Workflow 文件 (`.github/workflows/scrape_ips.yml`)
+
+因为你现在只想保存一个固定的 `cloudflare_top10_ips.txt` 文件并覆盖它，`git add` 命令需要做相应的调整。
+
+```yaml
+name: Scrape Cloudflare Top IPs
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        pip install beautifulsoup4 selenium webdriver_manager # 只保留需要的库
+        # pandas不再需要，因为我们不再处理DataFrame
+
+    - name: Setup Chrome
+      uses: browser-actions/setup-chrome@v1
+      with:
+        chrome-version: 'stable'
+
+    - name: Run IP extraction script
+      run: python extract_ips_selenium.py # 确保文件名正确
+
+    - name: Commit and push changes
+      run: |
+        git config user.name "GitHub Actions Bot"
+        git config user.email "actions@github.com"
+        
+        # 确保data目录存在，即使脚本没有创建文件，或为了git add data/cloudflare_top10_ips.txt能找到目录
+        mkdir -p data 
+        
+        # 检查文件是否存在且有内容，避免空文件提交
+        if [ -s data/cloudflare_top10_ips.txt ]; then
+          git add data/cloudflare_top10_ips.txt
+          git commit -m "Automated Cloudflare Top 10 IPs update ($(date +%Y-%m-%d %H:%M))" || echo "No changes to commit"
+          git push
+        else
+          echo "No valid IP data file generated or file is empty, skipping commit."
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
