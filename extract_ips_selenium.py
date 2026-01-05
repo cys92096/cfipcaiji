@@ -58,7 +58,7 @@ def extract_cloudflare_top_10_ips(url):
                 ip_address = cols[1].text.strip() # IP地址在第二个<td>元素
                 if ip_address: # 确保IP地址不为空
                     top_ips.append(ip_address)
-                    if len(top_ips) >= 5: # 只提取前10个IP
+                    if len(top_ips) >= 10: # 只提取前10个IP
                         break
         return top_ips
 
