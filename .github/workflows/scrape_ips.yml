@@ -5,7 +5,6 @@ on:
     - cron: '10 */2 * * *'  # 每 2 小时自动运行一次
   workflow_dispatch: # 允许手动点击触发
 
-# 显式授予工作流写入仓库的权限，防止 push 被拒绝
 permissions:
   contents: write
 
@@ -17,7 +16,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0 # 获取完整历史，确保 reset 操作能顺利进行
+        fetch-depth: 0 
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -42,45 +41,41 @@ jobs:
         git config --local user.name "GitHub Actions Bot"
         git config --local user.email "actions@github.com"
         
-        # 2. 【核心防御】无条件退出之前可能卡在半空中的 rebase 或 merge 状态，解开 Git 的死结
+        # 2. 强行退出之前可能卡住的任何 Git 状态
         git rebase --abort || true
         git merge --abort || true
         
-        # 3. 自动识别你脚本生成的文件名
-        # 优先寻找 cloudflare_specific_ips.txt，如果不存在则使用 cloudflare_top10_ips.txt
+        # 3. 自动识别目标数据文件
         if [ -f "data/cloudflare_specific_ips.txt" ]; then
           TARGET_FILE="data/cloudflare_specific_ips.txt"
         else
           TARGET_FILE="data/cloudflare_top10_ips.txt"
         fi
-        echo "检测到目标数据文件: $TARGET_FILE"
         
         # 4. 检查文件是否存在且不为空
         if [ -s "$TARGET_FILE" ]; then
-          # 5. 把刚刚辛苦采集到的好文件备份到系统临时目录，防止等下被冲掉
+          
+          # 5. 把刚生成的好文件备份到系统临时目录
           cp "$TARGET_FILE" /tmp/latest_ips.txt
           
-          # 6. 【清道夫操作】强制洗白本地历史，完全同步为远程仓库的最新状态
+          # 6. 强制洗白本地历史，完全同步为远程仓库的最新状态
           git fetch origin main
           git reset --hard origin/main
           
-          # 7. 把完好的新数据从临时目录拿回来，强行覆盖掉旧文件
+          # 7. 把新数据拿回来强行覆盖工作区
           mkdir -p data
           cp /tmp/latest_ips.txt "$TARGET_FILE"
           
-          # 8. 重新暂存文件并检查内容是否真的有变动
+          # 8. 直接暂存，不再对比差异！
           git add "$TARGET_FILE"
           
-          if git diff --staged --quiet; then
-            echo "IP数据与远程相比未发生任何变动，无需更新。"
-          else
-            # 9. 重新生成干净的提交，并使用 --force (强推) 抹平一切远程冲突
-            COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
-            git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
-            
-            echo "🚀 正在通过强推(Force Push)解决所有冲突并更新数据..."
-            git push "https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main --force
-          fi
+          # 9. 直接无条件生成新提交并强推
+          COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
+          git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
+          
+          echo "🚀 不进行差异对比，正在无条件强推(Force Push)最新数据到远程..."
+          git push "https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main --force
+          
         else
-          echo "未生成有效的 IP 数据文件或文件为空，跳过提交。"
+          echo "❌ 错误: 未能生成有效文件或文件内容为空，跳过本次推送。"
         fi
