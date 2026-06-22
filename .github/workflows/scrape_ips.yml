@@ -1,38 +1,80 @@
-- name: Commit and push changes
+name: Scrape Cloudflare Top IPs
+
+on:
+  schedule:
+    - cron: '10 */2 * * *'  # 每 2 小时自动运行一次
+  workflow_dispatch: # 允许手动点击触发
+
+# 显式授予工作流写入仓库的权限，防止 push 被拒绝
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # 获取完整历史，确保 reset 操作能顺利进行
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
       run: |
-        # 1. 配置 Git 身份
+        pip install beautifulsoup4 selenium webdriver_manager
+
+    - name: Setup Chrome
+      uses: browser-actions/setup-chrome@v1
+      with:
+        chrome-version: 'stable'
+
+    - name: Run IP extraction script
+      run: python extract_ips_selenium.py # 运行你的 Python 爬虫脚本
+
+    - name: Commit and push changes
+      run: |
+        # 1. 配置 Git 机器人身份
         git config --local user.name "GitHub Actions Bot"
         git config --local user.email "actions@github.com"
         
-        # 2. 【核心防御】无条件退出之前可能卡在半空中的 rebase 或 merge 状态
+        # 2. 【核心防御】无条件退出之前可能卡在半空中的 rebase 或 merge 状态，解开 Git 的死结
         git rebase --abort || true
         git merge --abort || true
         
-        # 3. 定义我们要推送的目标文件
-        TARGET_FILE="data/cloudflare_top10_ips.txt"
+        # 3. 自动识别你脚本生成的文件名
+        # 优先寻找 cloudflare_specific_ips.txt，如果不存在则使用 cloudflare_top10_ips.txt
+        if [ -f "data/cloudflare_specific_ips.txt" ]; then
+          TARGET_FILE="data/cloudflare_specific_ips.txt"
+        else
+          TARGET_FILE="data/cloudflare_top10_ips.txt"
+        fi
+        echo "检测到目标数据文件: $TARGET_FILE"
         
-        # 如果你脚本生成的是 cloudflare_specific_ips.txt，请取消下一行的注释并注释掉上一行
-        # TARGET_FILE="data/cloudflare_specific_ips.txt"
-        
+        # 4. 检查文件是否存在且不为空
         if [ -s "$TARGET_FILE" ]; then
-          # 4. 把刚刚辛苦采集到的好文件备份到系统临时目录，防止被冲掉
+          # 5. 把刚刚辛苦采集到的好文件备份到系统临时目录，防止等下被冲掉
           cp "$TARGET_FILE" /tmp/latest_ips.txt
           
-          # 5. 【清道夫操作】强制洗白本地历史，完全同步为远程仓库的模样，解开死结
+          # 6. 【清道夫操作】强制洗白本地历史，完全同步为远程仓库的最新状态
           git fetch origin main
           git reset --hard origin/main
           
-          # 6. 把完好的新数据从临时目录拿回来，强行覆盖掉旧文件
+          # 7. 把完好的新数据从临时目录拿回来，强行覆盖掉旧文件
           mkdir -p data
           cp /tmp/latest_ips.txt "$TARGET_FILE"
           
-          # 7. 重新暂存文件并检查内容是否真的有变动
+          # 8. 重新暂存文件并检查内容是否真的有变动
           git add "$TARGET_FILE"
           
           if git diff --staged --quiet; then
-            echo "IP数据与远程相比未发生变动，无需更新。"
+            echo "IP数据与远程相比未发生任何变动，无需更新。"
           else
-            # 8. 重新生成干净的提交，并使用 --force (强推) 抹平一切远程冲突
+            # 9. 重新生成干净的提交，并使用 --force (强推) 抹平一切远程冲突
             COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
             git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
             
