@@ -2,8 +2,8 @@ name: Scrape Cloudflare Top IPs
 
 on:
   schedule:
-    - cron: '10 */2 * * *'  # 每 2 小时自动运行一次
-  workflow_dispatch: # 允许随时手动点击运行
+    - cron: '10 */2 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -37,40 +37,41 @@ jobs:
 
     - name: Commit and push changes
       run: |
-        # 1. 配置 Git 机器人身份
+        # 1. 配置机器人身份
         git config --local user.name "GitHub Actions Bot"
         git config --local user.email "actions@github.com"
         
-        # 2. 强行退出之前可能卡住的任何 Git 状态
+        # 2. 强行释放可能卡住的 Git 状态
         git rebase --abort || true
         git merge --abort || true
         
-        # 3. 目标路径直接死锁
+        # 3. 如果本地还有遗留的旧 top10 文件，强行改名合并，彻底不留隐患
+        if [ -f "data/cloudflare_top10_ips.txt" ]; then
+          mv data/cloudflare_top10_ips.txt data/cloudflare_specific_ips.txt
+        fi
+        
         TARGET_FILE="data/cloudflare_specific_ips.txt"
         
-        # 4. 检查文件是否存在且不为空
         if [ -s "$TARGET_FILE" ]; then
-          
-          # 5. 把刚生成的新数据备份到系统临时目录
+          # 4. 备份最新抓到的数据
           cp "$TARGET_FILE" /tmp/latest_ips.txt
           
-          # 6. 强制洗白本地历史，完全同步为远程仓库的最新状态
+          # 5. 强行重置工作区，和云端对齐历史
           git fetch origin main
           git reset --hard origin/main
           
-          # 7. 把全新数据拿回来强行覆盖工作区
+          # 6. 将最新数据放回工作区，强行覆盖
           mkdir -p data
           cp /tmp/latest_ips.txt "$TARGET_FILE"
           
-          # 8. 直接暂存，绝不对比差异，无条件生成新提交
+          # 7. 直接添加并生成 Commit，【绝不进行变动对比】，无条件更新！
           git add "$TARGET_FILE"
           COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
           git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
           
-          # 9. 用 --force (强推) 抹平一切阻碍，强行更新 GitHub 仓库
-          echo "🚀 正在无条件强推最新优选 IP 到远程仓库..."
+          # 8. 强推(Force Push)到远程，不管冲突，以此版本为王
+          echo "🚀 正在无条件强推最新数据，解决一切冲突..."
           git push "https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main --force
-          
         else
-          echo "❌ 错误: 未能找到 $TARGET_FILE 或文件为空，跳过本次推送。"
+          echo "❌ 错误: 未能生成有效文件，跳过推送。"
         fi
