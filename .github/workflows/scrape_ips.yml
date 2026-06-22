@@ -2,8 +2,8 @@ name: Scrape Cloudflare Top IPs
 
 on:
   schedule:
-    - cron: '10 */2 * * *'  # 每 2 小时自动运行一次
-  workflow_dispatch: # 允许手动点击触发
+    - cron: '10 */2 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -33,46 +33,42 @@ jobs:
         chrome-version: 'stable'
 
     - name: Run IP extraction script
-      run: python extract_ips_selenium.py # 运行你的 Python 爬虫脚本
+      run: python extract_ips_selenium.py
 
     - name: Commit and push changes
       run: |
-        # 1. 配置 Git 机器人身份
         git config --local user.name "GitHub Actions Bot"
         git config --local user.email "actions@github.com"
         
-        # 2. 强行退出之前可能卡住的任何 Git 状态
         git rebase --abort || true
         git merge --abort || true
         
-        # 3. 【彻底锁死文件名】对齐你的 Python 脚本输出
-        TARGET_FILE="data/cloudflare_top10_ips.txt"
-        echo "强制锁定目标数据文件: $TARGET_FILE"
+        # 1. 检查 Python 脚本到底生成了哪个文件，并统一命名
+        if [ -f "data/cloudflare_top10_ips.txt" ]; then
+          mv data/cloudflare_top10_ips.txt data/cloudflare_specific_ips.txt
+        fi
         
-        # 4. 检查文件是否存在且不为空
+        TARGET_FILE="data/cloudflare_specific_ips.txt"
+        
         if [ -s "$TARGET_FILE" ]; then
-          
-          # 5. 把刚生成的新文件备份到系统临时目录
+          # 2. 备份最新数据
           cp "$TARGET_FILE" /tmp/latest_ips.txt
           
-          # 6. 强制洗白本地历史，完全同步为远程仓库的最新状态
+          # 3. 强制洗白本地历史
           git fetch origin main
           git reset --hard origin/main
           
-          # 7. 把全新数据拿回来强行覆盖工作区
+          # 4. 把最新数据拿回来覆盖
           mkdir -p data
           cp /tmp/latest_ips.txt "$TARGET_FILE"
           
-          # 8. 直接暂存，绝不对比差异！
+          # 5. 直接无条件强推
           git add "$TARGET_FILE"
-          
-          # 9. 直接无条件生成新提交并强推
           COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
-          git commit -m "Automated Cloudflare Top 10 IPs update (${COMMIT_TIME})"
+          git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
           
-          echo "🚀 无条件强推最新数据到远程..."
+          echo "🚀 强行覆盖远程旧文件..."
           git push "https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main --force
-          
         else
-          echo "❌ 错误: 未能找到 $TARGET_FILE 或文件为空，跳过本次推送。"
+          echo "❌ 错误: 未能生成有效数据。"
         fi
