@@ -2,8 +2,8 @@ name: Scrape Cloudflare Top IPs
 
 on:
   schedule:
-    - cron: '10 */2 * * *'
-  workflow_dispatch:
+    - cron: '10 */2 * * *'  # 每 2 小时自动运行一次
+  workflow_dispatch: # 允许随时手动点击运行
 
 permissions:
   contents: write
@@ -37,38 +37,45 @@ jobs:
 
     - name: Commit and push changes
       run: |
+        # 1. 配置 Git 机器人身份
         git config --local user.name "GitHub Actions Bot"
         git config --local user.email "actions@github.com"
         
+        # 2. 强行退出之前可能卡住的任何 Git 状态
         git rebase --abort || true
         git merge --abort || true
         
-        # 1. 检查 Python 脚本到底生成了哪个文件，并统一命名
+        # 3. 强制兼容重命名：不管 Python 脚本输出了哪个名字，一律强行掰回 cloudflare_specific_ips.txt
         if [ -f "data/cloudflare_top10_ips.txt" ]; then
           mv data/cloudflare_top10_ips.txt data/cloudflare_specific_ips.txt
         fi
         
         TARGET_FILE="data/cloudflare_specific_ips.txt"
+        echo "当前锁定的唯一目标文件: $TARGET_FILE"
         
+        # 4. 检查文件是否存在且不为空
         if [ -s "$TARGET_FILE" ]; then
-          # 2. 备份最新数据
+          
+          # 5. 把刚生成的新数据备份到系统临时目录
           cp "$TARGET_FILE" /tmp/latest_ips.txt
           
-          # 3. 强制洗白本地历史
+          # 6. 强制洗白本地历史，完全同步为远程仓库的最新状态
           git fetch origin main
           git reset --hard origin/main
           
-          # 4. 把最新数据拿回来覆盖
+          # 7. 把全新数据拿回来强行覆盖工作区
           mkdir -p data
           cp /tmp/latest_ips.txt "$TARGET_FILE"
           
-          # 5. 直接无条件强推
+          # 8. 直接暂存，不再对比差异，无条件生成新提交
           git add "$TARGET_FILE"
           COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
           git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
           
-          echo "🚀 强行覆盖远程旧文件..."
+          # 9. 用 --force (强推) 抹平一切阻碍，强行更新 GitHub 仓库
+          echo "🚀 正在无条件强推最新优选 IP 到远程仓库..."
           git push "https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main --force
+          
         else
-          echo "❌ 错误: 未能生成有效数据。"
+          echo "❌ 错误: 未能找到有效数据文件或文件为空，跳过本次推送。"
         fi
