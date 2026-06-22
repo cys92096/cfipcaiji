@@ -12,6 +12,9 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        # 关键：获取所有历史和分支，保证 rebase 推送顺利进行
+        fetch-depth: 0 
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -20,8 +23,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install beautifulsoup4 selenium webdriver_manager # 只保留需要的库
-        # pandas不再需要，因为我们不再处理DataFrame
+        pip install beautifulsoup4 selenium webdriver_manager
 
     - name: Setup Chrome
       uses: browser-actions/setup-chrome@v1
@@ -29,23 +31,38 @@ jobs:
         chrome-version: 'stable'
 
     - name: Run IP extraction script
-      run: python extract_ips_selenium.py # 确保文件名正确
+      run: python extract_ips_selenium.py # 确保你的脚本文件名是这个
 
     - name: Commit and push changes
       run: |
-        git config user.name "GitHub Actions Bot"
-        git config user.email "actions@github.com"
+        # 1. 配置 Git 身份
+        git config --local user.name "GitHub Actions Bot"
+        git config --local user.email "actions@github.com"
         
-        # 确保data目录存在，即使脚本没有创建文件，或为了git add data/cloudflare_top10_ips.txt能找到目录
-        mkdir -p data 
+        # 2. 获取正确的时间戳（修复 date 语法错误）
+        COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
         
-        # 检查文件是否存在且有内容，避免空文件提交
-        if [ -s data/cloudflare_top10_ips.txt ]; then
-          git add data/cloudflare_top10_ips.txt
-          git commit -m "Automated Cloudflare Top 10 IPs update ($(date +%Y-%m-%d %H:%M))" || echo "No changes to commit"
-          git push
+        # 3. 注意：这里的文件名已更新为特定行提取后的新文件名
+        TARGET_FILE="data/cloudflare_specific_ips.txt"
+        
+        # 4. 检查新文件是否存在且不为空
+        if [ -s "$TARGET_FILE" ]; then
+          git add "$TARGET_FILE"
+          
+          # 如果有变动则提交，没有变动则优雅跳过
+          if git diff --staged --quiet; then
+            echo "IP数据未发生变化，无需更新。"
+          else
+            git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
+            
+            # 5. 核心修复：先拉取远程最新变动，防止 rejected 报错
+            git pull --rebase origin main
+            
+            # 6. 推送
+            git push origin main
+          fi
         else
-          echo "No valid IP data file generated or file is empty, skipping commit."
+          echo "未生成有效的 IP 数据文件或文件为空，跳过提交。"
         fi
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
