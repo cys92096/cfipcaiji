@@ -45,37 +45,34 @@ jobs:
         git rebase --abort || true
         git merge --abort || true
         
-        # 3. 自动识别目标数据文件
-        if [ -f "data/cloudflare_specific_ips.txt" ]; then
-          TARGET_FILE="data/cloudflare_specific_ips.txt"
-        else
-          TARGET_FILE="data/cloudflare_top10_ips.txt"
-        fi
+        # 3. 【彻底锁死文件名】对齐你的 Python 脚本输出
+        TARGET_FILE="data/cloudflare_top10_ips.txt"
+        echo "强制锁定目标数据文件: $TARGET_FILE"
         
         # 4. 检查文件是否存在且不为空
         if [ -s "$TARGET_FILE" ]; then
           
-          # 5. 把刚生成的好文件备份到系统临时目录
+          # 5. 把刚生成的新文件备份到系统临时目录
           cp "$TARGET_FILE" /tmp/latest_ips.txt
           
           # 6. 强制洗白本地历史，完全同步为远程仓库的最新状态
           git fetch origin main
           git reset --hard origin/main
           
-          # 7. 把新数据拿回来强行覆盖工作区
+          # 7. 把全新数据拿回来强行覆盖工作区
           mkdir -p data
           cp /tmp/latest_ips.txt "$TARGET_FILE"
           
-          # 8. 直接暂存，不再对比差异！
+          # 8. 直接暂存，绝不对比差异！
           git add "$TARGET_FILE"
           
           # 9. 直接无条件生成新提交并强推
           COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
-          git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
+          git commit -m "Automated Cloudflare Top 10 IPs update (${COMMIT_TIME})"
           
-          echo "🚀 不进行差异对比，正在无条件强推(Force Push)最新数据到远程..."
+          echo "🚀 无条件强推最新数据到远程..."
           git push "https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main --force
           
         else
-          echo "❌ 错误: 未能生成有效文件或文件内容为空，跳过本次推送。"
+          echo "❌ 错误: 未能找到 $TARGET_FILE 或文件为空，跳过本次推送。"
         fi
