@@ -29,7 +29,7 @@ def extract_cloudflare_specific_ips(url):
             EC.presence_of_element_located((By.CSS_SELECTOR, 'table.table-striped tbody tr'))
         )
         
-        # 保持你原汁原味的稳定策略：强制等待5秒让JS更新到最新实时数据
+        # 稳定策略：强制等待5秒让JS更新到最新实时数据
         print("等待5秒，确保页面内容更新到最新实时数据...")
         time.sleep(5) 
         
@@ -64,7 +64,7 @@ def extract_cloudflare_specific_ips(url):
                         print(f"[提取成功] 行号 {row_num} | 线路: {line_type} -> IP: {ip_address}")
                         selected_ips.append(ip_address)
             
-            # 优化：最大只需要第 43 行，超过 43 行直接退出循环，节省服务器性能
+            # 优化：最大只需要第 43 行，超过 43 行直接退出循环
             if row_num > 43:
                 break
                 
@@ -85,10 +85,10 @@ def main():
         for ip in ips:
             print(ip)
 
-        # 依旧保存到你原先的路径和文件名，确保后方工作流不需要做任何修改
+        # 强制锁定唯一文件名：cloudflare_specific_ips.txt
         output_dir = 'data'
         os.makedirs(output_dir, exist_ok=True)
-        output_filename = os.path.join(output_dir, "cloudflare_top10_ips.txt")
+        output_filename = os.path.join(output_dir, "cloudflare_specific_ips.txt")
 
         with open(output_filename, 'w', encoding='utf-8') as f:
             for ip in ips:
