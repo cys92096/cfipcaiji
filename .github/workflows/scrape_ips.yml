@@ -1,68 +1,101 @@
 name: Scrape Cloudflare Top IPs
 
+
+
 on:
+
   schedule:
+
     - cron: '10 */2 * * *'
+
   workflow_dispatch: # 允许手动触发
 
-# 显式授予工作流写入仓库的权限，防止 push 被拒绝
-permissions:
-  contents: write
+
 
 jobs:
+
   scrape:
+
     runs-on: ubuntu-latest
 
+
+
     steps:
+
     - name: Checkout repository
+
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0 # 获取完整历史，确保 rebase 能够顺利进行
+
+
 
     - name: Set up Python
+
       uses: actions/setup-python@v5
+
       with:
+
         python-version: '3.x'
 
+
+
     - name: Install dependencies
+
       run: |
-        pip install beautifulsoup4 selenium webdriver_manager
+
+        pip install beautifulsoup4 selenium webdriver_manager # 只保留需要的库
+
+        # pandas不再需要，因为我们不再处理DataFrame
+
+
 
     - name: Setup Chrome
+
       uses: browser-actions/setup-chrome@v1
+
       with:
+
         chrome-version: 'stable'
 
+
+
     - name: Run IP extraction script
-      run: python extract_ips_selenium.py
+
+      run: python extract_ips_selenium.py # 确保文件名正确
+
+
 
     - name: Commit and push changes
+
       run: |
-        # 配置 Git 机器人身份
-        git config --local user.name "GitHub Actions Bot"
-        git config --local user.email "actions@github.com"
+
+        git config user.name "GitHub Actions Bot"
+
+        git config user.email "actions@github.com"
+
         
-        # 确保数据目录存在
+
+        # 确保data目录存在，即使脚本没有创建文件，或为了git add data/cloudflare_top10_ips.txt能找到目录
+
         mkdir -p data 
+
         
-        # 检查文件是否存在且不为空
+
+        # 检查文件是否存在且有内容，避免空文件提交
+
         if [ -s data/cloudflare_top10_ips.txt ]; then
+
           git add data/cloudflare_top10_ips.txt
-          
-          # 检查文件内容是否有真正的改变，防止生成无意义的空 commit
-          if git diff --staged --quiet; then
-            echo "IP 数据未发生变动，无需提交。"
-          else
-            # 优雅地格式化时间戳，避开 YAML 的直接解析冲突
-            COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
-            git commit -m "Automated Cloudflare Top 10 IPs update (${COMMIT_TIME})"
-            
-            # 核心修复：先拉取远程最新变更防止冲突，然后再推送到主分支
-            git pull --rebase origin main
-            git push origin main
-          fi
+
+          git commit -m "Automated Cloudflare Top 10 IPs update ($(date +%Y-%m-%d %H:%M))" || echo "No changes to commit"
+
+          git push
+
         else
-          echo "未生成有效的 IP 数据文件或文件为空，跳过提交。"
+
+          echo "No valid IP data file generated or file is empty, skipping commit."
+
         fi
+
       env:
+
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
