@@ -5,6 +5,10 @@ on:
     - cron: '10 */2 * * *'
   workflow_dispatch: # 允许手动触发
 
+# 核心修复 1：显式授予 Actions 写入仓库的权限
+permissions:
+  contents: write
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
@@ -13,7 +17,8 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        # 关键：获取所有历史和分支，保证 rebase 推送顺利进行
+        # 核心修复 2：使用默认 Token 认证，并获取完整历史以支持 rebase
+        token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0 
 
     - name: Set up Python
@@ -31,7 +36,7 @@ jobs:
         chrome-version: 'stable'
 
     - name: Run IP extraction script
-      run: python extract_ips_selenium.py # 确保你的脚本文件名是这个
+      run: python extract_ips_selenium.py
 
     - name: Commit and push changes
       run: |
@@ -39,30 +44,27 @@ jobs:
         git config --local user.name "GitHub Actions Bot"
         git config --local user.email "actions@github.com"
         
-        # 2. 获取正确的时间戳（修复 date 语法错误）
+        # 2. 获取正确的时间戳
         COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
         
-        # 3. 注意：这里的文件名已更新为特定行提取后的新文件名
-        TARGET_FILE="data/cloudflare_specific_ips.txt"
+        # 3. 动态识别生成的文件（兼容 top10 或 specific 命名）
+        TARGET_FILE=$(ls data/cloudflare_*.txt | head -n 1)
         
-        # 4. 检查新文件是否存在且不为空
         if [ -s "$TARGET_FILE" ]; then
           git add "$TARGET_FILE"
           
-          # 如果有变动则提交，没有变动则优雅跳过
           if git diff --staged --quiet; then
             echo "IP数据未发生变化，无需更新。"
           else
             git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
             
-            # 5. 核心修复：先拉取远程最新变动，防止 rejected 报错
-            git pull --rebase origin main
+            # 4. 核心修复 3：拉取时强制指定远程分支，确保同步
+            git fetch origin main
+            git rebase origin/main
             
-            # 6. 推送
+            # 5. 推送
             git push origin main
           fi
         else
           echo "未生成有效的 IP 数据文件或文件为空，跳过提交。"
         fi
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
