@@ -2,9 +2,10 @@ name: Scrape Cloudflare Top IPs
 
 on:
   schedule:
-    - cron: '10 */2 * * *'  # 每 2 小时自动运行一次
-  workflow_dispatch: # 允许在 GitHub 页面上手动点击触发
+    - cron: '10 */2 * * *'
+  workflow_dispatch: # 允许手动触发
 
+# 显式授予工作流写入仓库的权限，防止 push 被拒绝
 permissions:
   contents: write
 
@@ -16,8 +17,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0 
+        fetch-depth: 0 # 获取完整历史，确保 rebase 能够顺利进行
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -34,41 +34,35 @@ jobs:
         chrome-version: 'stable'
 
     - name: Run IP extraction script
-      run: python extract_ips_selenium.py  # 请确保你仓库里的爬虫脚本名叫这个
+      run: python extract_ips_selenium.py
 
     - name: Commit and push changes
       run: |
-        # 1. 配置 Git 身份
+        # 配置 Git 机器人身份
         git config --local user.name "GitHub Actions Bot"
         git config --local user.email "actions@github.com"
         
-        # 2. 获取正确的时间戳
-        COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
-        TARGET_FILE="data/cloudflare_specific_ips.txt"
+        # 确保数据目录存在
+        mkdir -p data 
         
-        if [ -s "$TARGET_FILE" ]; then
-          # 3. 先把本地刚生成的好文件备份到临时目录，防止被远程同步冲掉
-          cp "$TARGET_FILE" /tmp/latest_ips.txt
+        # 检查文件是否存在且不为空
+        if [ -s data/cloudflare_top10_ips.txt ]; then
+          git add data/cloudflare_top10_ips.txt
           
-          # 4. 强制把本地的分支指针同步到远程最新状态，消除本地可能积压的冲突历史
-          git fetch origin main
-          git reset --hard origin/main
-          
-          # 5. 把刚刚备份的最新的 IP 数据拷贝回来，实现强行覆盖
-          mkdir -p data
-          cp /tmp/latest_ips.txt "$TARGET_FILE"
-          
-          # 6. 重新添加并检查是否有真正的内容变动
-          git add "$TARGET_FILE"
-          
+          # 检查文件内容是否有真正的改变，防止生成无意义的空 commit
           if git diff --staged --quiet; then
-            echo "IP数据与远程相比未发生变化，无需更新。"
+            echo "IP 数据未发生变动，无需提交。"
           else
-            # 7. 有变动则提交，并使用强制推送（--force）解决一切冲突
-            git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
-            echo "正在强行推送到远程仓库..."
-            git push "https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main --force
+            # 优雅地格式化时间戳，避开 YAML 的直接解析冲突
+            COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
+            git commit -m "Automated Cloudflare Top 10 IPs update (${COMMIT_TIME})"
+            
+            # 核心修复：先拉取远程最新变更防止冲突，然后再推送到主分支
+            git pull --rebase origin main
+            git push origin main
           fi
         else
           echo "未生成有效的 IP 数据文件或文件为空，跳过提交。"
         fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
