@@ -1,59 +1,136 @@
-name: Update IP List
+name: Scrape and Sync Cloudflare IPs
 
 on:
   schedule:
-    - cron: '0 */2 * * *' # 每3小时运行一次
-  workflow_dispatch: # 允许手动触发
+    - cron: '10 */2 * * *'  # 每 2 小时自动运行一次
+  workflow_dispatch: # 允许随时手动点击运行
+
+permissions:
+  contents: write
 
 jobs:
-
-  update-ip-list:
+  scrape_and_sync:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v3
-      
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
       with:
-        python-version: '3.9'
-        
+        fetch-depth: 0 
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install requests
-        pip install beautifulsoup4
-        
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2
+        pip install beautifulsoup4 selenium webdriver_manager requests
+
+    - name: Setup Chrome
+      uses: browser-actions/setup-chrome@v1
       with:
-        token: ${{ github.token }}
-        repository: ${{ github.repository }}
-        retain_days: 2
-        keep_minimum_runs: 6
-        
-    - name: Run script
-      run: python ${{ github.workspace }}/collect_ips.py
-        
-    - name: Commit and push changes
+        chrome-version: 'stable'
+
+    - name: Run IP extraction script
+      run: python extract_ips_selenium.py
+
+    - name: Commit and push changes to GitHub
       run: |
+        git config --local user.name "GitHub Actions Bot"
         git config --local user.email "actions@github.com"
-        git config --local user.name "GitHub Action"
-        if [ -n "$(git status --porcelain)" ]; then
-          git add ip.txt
-          git commit -m "Automatic update"
-          git push
-        else
-          echo "No changes detected, skipping commit."
-        fi        
-    - name: Commit and push changes
-      run: |
-        git config --local user.email "actions@github.com"
-        git config --local user.name "GitHub Action"
-        if [ -n "$(git status --porcelain)" ]; then
-          git add ip.txt
-          git commit -m "Automatic update"
-          git push
-        else
-          echo "No changes detected, skipping commit."
+        
+        git rebase --abort || true
+        git merge --abort || true
+        
+        if [ -f "data/cloudflare_top10_ips.txt" ]; then
+          mv data/cloudflare_top10_ips.txt data/cloudflare_specific_ips.txt
         fi
+        
+        TARGET_FILE="data/cloudflare_specific_ips.txt"
+        
+        if [ -s "$TARGET_FILE" ]; then
+          cp "$TARGET_FILE" /tmp/latest_ips.txt
+          git fetch origin main
+          git reset --hard origin/main
+          mkdir -p data
+          cp /tmp/latest_ips.txt "$TARGET_FILE"
+          
+          git add "$TARGET_FILE"
+          COMMIT_TIME=$(date +"%Y-%m-%d %H:%M")
+          git commit -m "Automated Cloudflare Top IPs update (${COMMIT_TIME})"
+          git push "https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main --force
+        else
+          echo "❌ 错误: 未能生成有效文件，跳过推送。"
+        fi
+
+    # 🔥 【核心新增】直接在国外 GitHub 容器内向 Cloudflare 提交同步请求，完美避开本地机房 SSL/403 阻断
+    - name: Sync DNS Records directly via GitHub Env
+      env:
+        CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        CF_DNS_NAME: ${{ secrets.CF_DNS_NAME }}
+      run: |
+        python - << 'EOF'
+        import os
+        import requests
+        
+        CF_API_TOKEN = os.getenv("CF_API_TOKEN")
+        CF_ZONE_ID = os.getenv("CF_ZONE_ID")
+        DNS_RECORD_NAME = os.getenv("CF_DNS_NAME")
+        TARGET_FILE = "data/cloudflare_specific_ips.txt"
+        
+        if not CF_API_TOKEN or not CF_ZONE_ID or not DNS_RECORD_NAME:
+            print("❌ 错误: 缺少 GitHub Secrets 环境变量配置，终止同步。")
+            exit(1)
+            
+        if not os.path.exists(TARGET_FILE):
+            print("❌ 错误: 未找到本地 IP 数据文件。")
+            exit(1)
+            
+        ipv4_ips = []
+        ipv6_ips = []
+        with open(TARGET_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                ip = line.strip()
+                if not ip: continue
+                if ":" in ip: ipv6_ips.append(ip)
+                else: ipv4_ips.append(ip)
+                
+        print(f"📊 成功读取本地最新数据 -> IPv4: {len(ipv4_ips)}个, IPv6: {len(ipv6_ips)}个")
+        
+        def sync_dns(record_type, target_ips):
+            if not target_ips: return
+            print(f"\n🚀 开始同步 [{record_type}] 记录...")
+            headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
+            url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/dns_records"
+            params = {"name": DNS_RECORD_NAME, "type": record_type, "per_page": 100}
+            
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=15)
+                if res.status_code != 200:
+                    print(f" ❌ 获取列表失败: {res.text}")
+                    return
+                existing_records = res.json().get("result", [])
+                current_dns_map = {record["content"]: record["id"] for record in existing_records}
+                print(f" 云端现有 {len(current_dns_map)} 条 {record_type} 记录。")
+                
+                for ip in target_ips:
+                    if ip in current_dns_map:
+                        print(f"  [保持不动] -> {ip}")
+                        current_dns_map.pop(ip)
+                    else:
+                        print(f"  [➕ 新增] {record_type} -> {ip}")
+                        data = {"type": record_type, "name": DNS_RECORD_NAME, "content": ip, "ttl": 60, "proxied": False}
+                        requests.post(url, headers=headers, json=data, timeout=15)
+                        
+                for old_ip, record_id in current_dns_map.items():
+                    print(f"  [➖ 删除] 过期 {record_type} -> {old_ip}")
+                    requests.delete(f"{url}/{record_id}", headers=headers, timeout=15)
+            except Exception as e:
+                print(f" ❌ 请求异常: {e}")
+                
+        sync_dns("A", ipv4_ips)
+        sync_dns("AAAA", ipv6_ips)
+        print("\n🎉 GitHub Actions 远端全量同步顺利完成！")
+        EOF
