@@ -42,7 +42,7 @@ def extract_cloudflare_specific_ips(url):
             return []
 
         # 精准锁定：1-4 (电信)、31-33 (多线)、41-43 (IPv6)
-        target_rows = set(list(range(1, 5)) + list(range(31, 34)) + list(range(41, 44)))
+        target_rows = set(list(range(1, 5)) + list(range(11, 13)) + list(range(41, 44)))
 
         for row_num, row in enumerate(tbody.find_all('tr'), start=1):
             if row_num in target_rows:
